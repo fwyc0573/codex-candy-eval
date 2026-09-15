@@ -47,11 +47,28 @@ def resolve_codex_executable() -> str:
     raise RuntimeError("找不到 codex 可执行文件，请确认已安装并加入 PATH。")
 
 
-def run_codex(model: str | None, effort: str):
-    exe = resolve_codex_executable()
+PROVIDERS = {
+    "scx": {
+        "command": ("/data/ycfeng/stepcode-codex-home/bin/stepcode-codex",),
+        "env": {
+            "HOME": "/data/ycfeng/stepcode-codex-home",
+            "STEPCODE_HOME": "/data/ycfeng/stepcode-codex-home/.stepcode",
+            "CODEX_HOME": "/data/ycfeng/stepcode-codex-home/.stepcode/codex",
+            "CODEX_SESSIONS_PATH": "/data/ycfeng/stepcode-codex-home/.codex/sessions",
+        },
+    },
+    "cx": {"command": ("/data/ycfeng/codex-hud/bin/codex-hud",)},
+    "codex-chatgpt": {"command": ("/data/ycfeng/codex-hud/bin/codex-hud",), "env": {"CODEX_HOME": "/data/ycfeng/codex-home-chatgpt"}, "prefix": ("-p", "chatgpt")},
+}
 
-    cmd = [
-        exe, "exec", "--json",
+
+def run_codex(model: str | None, effort: str, provider: str, timeout: float = 300):
+    config = PROVIDERS[provider]
+    cmd = list(config["command"])
+    cmd.extend(config.get("prefix", ()))
+
+    cmd.extend([
+        "exec", "--json",
         "--skip-git-repo-check",
         "--ephemeral",
         "-s", "read-only",
@@ -59,19 +76,23 @@ def run_codex(model: str | None, effort: str):
         # 评测结果，保证不同机器/不同记忆状态下结果可复现。等价于 -c features.memories=false。
         "--disable", "memories",
         "-c", f"model_reasoning_effort={effort}",
-    ]
+    ])
     if model:
         cmd += ["-m", model]
 
-    # 多行题目通过 stdin 传入：作为命令行参数时，经 cmd.exe/codex.cmd 包装后换行会被
-    # 吞掉，而管道里的内容能完整保留。codex exec 在无位置参数且 stdin 非 TTY 时读 stdin。
+    # Pass the prompt as the positional argument supported by current Codex CLI.
+    # This avoids provider wrappers interpreting piped input as interactive stdin.
+    cmd.append(CODEX_PROMPT)
+    env = os.environ.copy()
+    env.update(config.get("env", {}))
     proc = subprocess.run(
         cmd,
-        input=CODEX_PROMPT,
         capture_output=True,
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=env,
+        timeout=timeout,
     )
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr.strip() or proc.stdout.strip() or "codex exec failed")
@@ -211,32 +232,37 @@ def main() -> None:
         choices=["low", "medium", "high", "xhigh", "max", "ultra"],
     )
     parser.add_argument("-n", "--tests", type=int, default=1)
+    parser.add_argument("-p", "--provider", choices=["all", *PROVIDERS], default="all")
+    parser.add_argument("--timeout", type=float, default=300, help="Per-request timeout in seconds.")
     args = parser.parse_args()
 
-    headers = ["Run", "Codex", "In Tok", "Out Tok", "Reason Tok", "Time(s)", "TPS", "OK"]
-    aligns = ["right", "left", "right", "right", "right", "right", "right", "center"]
+    headers = ["Provider", "Run", "Codex", "In Tok", "Out Tok", "Reason Tok", "Time(s)", "TPS", "OK"]
+    aligns = ["left", "right", "left", "right", "right", "right", "right", "right", "center"]
 
-    def run_one(index: int) -> tuple[list, bool | None]:
+    providers = list(PROVIDERS) if args.provider == "all" else [args.provider]
+
+    def run_one(provider: str, index: int) -> tuple[list, bool | None]:
         try:
             start = time.perf_counter()
-            text, in_tok, out_tok, rea_tok = run_codex(args.model, args.reasoning_effort)
+            text, in_tok, out_tok, rea_tok = run_codex(args.model, args.reasoning_effort, provider, args.timeout)
             elapsed = time.perf_counter() - start
             tps = out_tok / elapsed if out_tok and elapsed > 0 else None
             ok = bool(ANSWER_PATTERN.search(text))
-            return [index, preview(text), in_tok, out_tok, rea_tok, f"{elapsed:.1f}",
+            return [provider, index, preview(text), in_tok, out_tok, rea_tok, f"{elapsed:.1f}",
                     f"{tps:.1f}" if tps else "-", "✓" if ok else "✗"], ok
         except Exception as exc:
-            return [index, f"ERROR: {preview(str(exc))}", *["-"] * 6], None
+            return [provider, index, f"ERROR: {preview(str(exc))}", *["-"] * 6], None
 
     # 串行执行：逐个请求，完成一个立即打印该行结果。
     rows = []
     graded = []
     prev_lines = 0  # 上一次绘制的表格占据的屏幕行数，用于原地重绘时上移光标
-    for index in range(1, args.tests + 1):
-        row, ok = run_one(index)
-        rows.append(row)
-        if ok is not None:
-            graded.append(ok)
+    for provider in providers:
+        for index in range(1, args.tests + 1):
+            row, ok = run_one(provider, index)
+            rows.append(row)
+            if ok is not None:
+                graded.append(ok)
         if use_ansi:
             # 用“行数计数 + 光标上移（CSI A）”替代 save/restore（CSI s/u）。
             # macOS Terminal.app 不支持 CSI s/u，会导致表格每轮向下堆叠、表头重复；
