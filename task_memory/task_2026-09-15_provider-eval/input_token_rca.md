@@ -54,6 +54,20 @@ The input token count is returned by the selected model provider in the `turn.co
 2. `cx` uses the npm Codex runtime with the `stepcode` provider adapter and a different system/tool setup.
 3. `codex-chatgpt` uses the same npm runtime but the `openai` profile/provider and a separate home.
 
+## Deeper attribution
+
+The fixed offsets can be reproduced from the two prompts alone. `cx - scx` is `19,775 - 13,555 = 6,220` for the one-line prompt and `19,966 - 13,746 = 6,220` for the candy prompt. `codex-chatgpt - cx` is `21,555 - 19,775 = 1,780` and `21,746 - 19,966 = 1,780`. Because changing only the user prompt changes every provider by the same `191` tokens, these offsets are injected before the user content and are unrelated to the candy text, answer length, or reasoning.
+
+The local launcher contributes no provider-specific prompt text. `codex_candy_eval.py` appends the identical positional prompt, uses the same `gpt-6-astra` and `model_reasoning_effort=low`, disables memories, removes HUD variables, and sets `stdin=DEVNULL`. Its parser copies the last `turn.completed.usage` object verbatim. Therefore the divergence occurs inside each CLI's request builder or upstream gateway accounting.
+
+There are three concrete sources of envelope divergence visible on disk:
+
+1. **Different runtime instruction catalogs.** `scx` loads `/data/ycfeng/stepcode-codex-home/.stepcode/codex/stepcode-base-instructions.json`; its `gpt-6-astra` instruction string is 21,261 bytes. The npm CLI is 0.154.0 and uses its compiled OpenAI Codex instruction catalog. These are different text and potentially different tool-policy sections, even though both identify as Codex.
+2. **Different home configuration and enabled extensions.** `scx` selects `model_provider=stepcode-api`, `https://models-proxy.stepfun-inc.com/v1`, a 200,000-token context, and only the MCP entries in its StepCode config. `cx` selects `model_provider=stepcode`, `https://subworker.bestony.com`, a 250,000-token context, `service_tier=fast`, and enables the `i-have-adhd` plugin plus its marketplace metadata. `codex-chatgpt` inherits the npm home setup but layers `chatgpt.config.toml`, changing the provider to `openai` and `service_tier=default`; it has its own home state and the same plugin declarations.
+3. **Provider accounting/cache semantics.** The usage records are not shaped the same: `scx` reports `cached_input_tokens=0` and `cache_write_input_tokens=13,552`; `cx` reports `cached_input_tokens=3,840` and no cache-write count; ChatGPT reports neither. `input_tokens` is the provider's total for its serialized envelope, while cache fields are provider-specific accounting fields. A cache hit or write can therefore alter the decomposition without making the visible prompt different.
+
+The exact token contribution of each individual instruction/tool block cannot be recovered from this repository because none of the three gateways exposes the serialized request in the captured artifacts. The exact, evidence-backed statement is that the gateway receives three different pre-prompt envelopes and reports them with different cache accounting. Capturing redacted outgoing Responses payloads (or gateway request logs) is required to split the 6,220 and 1,780 offsets into individual blocks.
+
 The stable 6,220 and 1,780 token offsets across minimal and full prompts prove that the main cause is these provider-specific hidden prefixes and tool/instruction declarations. The different cache fields show that the providers also account for prompt-cache tokens differently. Therefore, the displayed input-token values are valid per-provider usage values, but they are not directly comparable as a pure count of the visible candy prompt.
 
 ## Excluded Causes
