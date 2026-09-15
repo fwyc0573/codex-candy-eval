@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 import json
 import os
+from pathlib import Path
 import re
 import shutil
 import subprocess
@@ -27,6 +29,7 @@ CODEX_PROMPT = """不使用任何外部工具回答以下问题：
 
 # 正确答案为 21：只要回答中出现独立的 "21"（前后非数字）即判为正确。
 ANSWER_PATTERN = re.compile(r"(?<!\d)21(?!\d)")
+RESULT_PATH = Path("/data/ycfeng/codex-iq.md")
 
 
 def resolve_codex_executable() -> str:
@@ -195,6 +198,57 @@ def render_table(headers: list[str], rows: list[list], aligns: list[str]) -> str
     return "\n".join(lines)
 
 
+def render_markdown_table(headers: list[str], rows: list[list]) -> str:
+    """Render the latest result rows as a readable Markdown table."""
+    def cell(value: object) -> str:
+        return str(value).replace("|", "\\|").replace("\n", " ")
+
+    lines = [
+        "| " + " | ".join(cell(header) for header in headers) + " |",
+        "| " + " | ".join("---" for _ in headers) + " |",
+    ]
+    lines.extend("| " + " | ".join(cell(value) for value in row) + " |" for row in rows)
+    return "\n".join(lines)
+
+
+def write_latest_results(
+    *,
+    headers: list[str],
+    rows: list[list],
+    model: str | None,
+    effort: str,
+    provider: str,
+    tests: int,
+    timeout: float,
+    graded: list[bool],
+    correct: int,
+) -> None:
+    """Overwrite the shared Markdown artifact with the latest evaluation."""
+    accuracy = f"{correct / len(graded) * 100:.1f}%" if graded else "-"
+    generated_at = datetime.now().astimezone().isoformat(timespec="seconds")
+    model_name = model or "local default"
+    summary = f"Graded {len(graded)}/{len(rows)}; correct={correct}; accuracy={accuracy}."
+    content = "\n".join([
+        "# Codex IQ Evaluation",
+        "",
+        f"Generated: `{generated_at}`",
+        "",
+        f"- Model: `{model_name}`",
+        f"- Reasoning effort: `{effort}`",
+        f"- Provider selection: `{provider}`",
+        f"- Tests per provider: `{tests}`",
+        f"- Per-request timeout: `{timeout:g}s`",
+        "",
+        "## Latest Results",
+        "",
+        render_markdown_table(headers, rows),
+        "",
+        f"**{summary}**",
+        "",
+    ])
+    RESULT_PATH.write_text(content, encoding="utf-8")
+
+
 def preview(text: str, limit: int = 40) -> str:
     flat = text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", r"\n")
     if display_width(flat) <= limit:
@@ -309,9 +363,27 @@ def main() -> None:
         print(render_table(headers, rows, aligns), flush=True)
 
     correct = sum(graded)
-    print(f"\nGraded {len(graded)}/{len(rows)}  correct={correct}  "
-          f"accuracy={correct / len(graded) * 100:.1f}%"
-          if graded else f"\nGraded 0/{args.tests}")
+    if graded:
+        summary = (f"Graded {len(graded)}/{len(rows)}  correct={correct}  "
+                   f"accuracy={correct / len(graded) * 100:.1f}%")
+    else:
+        summary = f"Graded 0/{len(rows)}"
+    print(f"\n{summary}")
+    try:
+        write_latest_results(
+            headers=headers,
+            rows=rows,
+            model=args.model,
+            effort=args.reasoning_effort,
+            provider=args.provider,
+            tests=args.tests,
+            timeout=args.timeout,
+            graded=graded,
+            correct=correct,
+        )
+        print(f"Latest results written to {RESULT_PATH}")
+    except OSError as exc:
+        print(f"WARNING: failed to write {RESULT_PATH}: {exc}", file=sys.stderr)
 
 
 if __name__ == "__main__":
