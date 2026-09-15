@@ -115,6 +115,7 @@ def run_codex(model: str | None, effort: str, provider: str, timeout: float = 30
     env.update(config.get("env", {}))
     proc = subprocess.run(
         cmd,
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
         encoding="utf-8",
