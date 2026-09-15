@@ -58,10 +58,14 @@ PROVIDERS = {
         },
     },
     "cx": {
-        "command": ("/data/ycfeng/codex-hud/bin/codex-hud",),
+        "command": ("/data/ycfeng/codex-home/npm-global/bin/codex",),
         "env": {"CODEX_HOME": "/data/ycfeng/codex-home"},
     },
-    "codex-chatgpt": {"command": ("/data/ycfeng/codex-hud/bin/codex-hud",), "env": {"CODEX_HOME": "/data/ycfeng/codex-home-chatgpt"}, "prefix": ("-p", "chatgpt")},
+    "codex-chatgpt": {
+        "command": ("/data/ycfeng/codex-home/npm-global/bin/codex",),
+        "env": {"CODEX_HOME": "/data/ycfeng/codex-home-chatgpt"},
+        "prefix": ("-p", "chatgpt"),
+    },
 }
 
 
@@ -106,6 +110,8 @@ def run_codex(model: str | None, effort: str, provider: str, timeout: float = 30
     # This avoids provider wrappers interpreting piped input as interactive stdin.
     cmd.append(CODEX_PROMPT)
     env = os.environ.copy()
+    for name in ("CODEX_HUD_CLI_PATH", "CODEX_HUD_SHELL_PATH", "CODEX_HUD_SESSION_PREFIX"):
+        env.pop(name, None)
     env.update(config.get("env", {}))
     proc = subprocess.run(
         cmd,
