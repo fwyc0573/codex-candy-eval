@@ -8,3 +8,5 @@
 - Original invocation reproduced `Reading prompt from stdin...`.
 - Added `scx`, `cx`, and `codex-chatgpt` provider selection and aggregate output.
 - Added per-request timeout and positional prompt dispatch.
+- Updated `codex-chatgpt` to run `vpn start` before each request; failures and timeout are surfaced as provider errors.
+- Verified `vpn start` returned `state=running` on 2026-09-15.

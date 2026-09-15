@@ -64,6 +64,25 @@ PROVIDERS = {
 
 def run_codex(model: str | None, effort: str, provider: str, timeout: float = 300):
     config = PROVIDERS[provider]
+    if provider == "codex-chatgpt":
+        vpn = shutil.which("vpn")
+        if not vpn:
+            raise RuntimeError("找不到 vpn 命令，无法启动 ficlash；请先确认 vpn 已安装并加入 PATH。")
+        try:
+            vpn_result = subprocess.run(
+                [vpn, "start"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=min(timeout, 60),
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError("vpn start 超时，ficlash 未启动。") from exc
+        if vpn_result.returncode != 0:
+            detail = vpn_result.stderr.strip() or vpn_result.stdout.strip()
+            raise RuntimeError(f"vpn start 失败，ficlash 未启动{': ' + detail if detail else ''}")
+
     cmd = list(config["command"])
     cmd.extend(config.get("prefix", ()))
 
