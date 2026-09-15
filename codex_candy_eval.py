@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import os
 import re
@@ -265,8 +266,8 @@ def main() -> None:
     parser.add_argument("--timeout", type=float, default=300, help="Per-request timeout in seconds.")
     args = parser.parse_args()
 
-    headers = ["Provider", "Run", "Codex", "In Tok", "Out Tok", "Reason Tok", "Time(s)", "TPS", "OK"]
-    aligns = ["left", "right", "left", "right", "right", "right", "right", "right", "center"]
+    headers = ["Provider", "Run", "In Tok", "Out Tok", "Reason Tok", "Time(s)", "TPS", "OK"]
+    aligns = ["left", "right", "right", "right", "right", "right", "right", "center"]
 
     providers = list(PROVIDERS) if args.provider == "all" else [args.provider]
 
@@ -277,36 +278,38 @@ def main() -> None:
             elapsed = time.perf_counter() - start
             tps = out_tok / elapsed if out_tok and elapsed > 0 else None
             ok = bool(ANSWER_PATTERN.search(text))
-            return [provider, index, preview(text), in_tok, out_tok, rea_tok, f"{elapsed:.1f}",
+            return [provider, index, in_tok, out_tok, rea_tok, f"{elapsed:.1f}",
                     f"{tps:.1f}" if tps else "-", "✓" if ok else "✗"], ok
         except Exception as exc:
-            return [provider, index, f"ERROR: {preview(str(exc))}", *["-"] * 6], None
+            return [provider, index, *["-"] * 6], None
 
-    # 串行执行：逐个请求，完成一个立即打印该行结果。
+    # Submit every provider/test pair before collecting results so providers run concurrently.
+    jobs = [(provider, index) for provider in providers for index in range(1, args.tests + 1)]
     rows = []
     graded = []
-    prev_lines = 0  # 上一次绘制的表格占据的屏幕行数，用于原地重绘时上移光标
-    for provider in providers:
-        for index in range(1, args.tests + 1):
-            row, ok = run_one(provider, index)
+    prev_lines = 0
+    with ThreadPoolExecutor(max_workers=max(1, len(jobs))) as executor:
+        futures = {executor.submit(run_one, provider, index): (provider, index)
+                   for provider, index in jobs}
+        for future in as_completed(futures):
+            row, ok = future.result()
             rows.append(row)
             if ok is not None:
                 graded.append(ok)
-        if use_ansi:
-            # 用“行数计数 + 光标上移（CSI A）”替代 save/restore（CSI s/u）。
-            # macOS Terminal.app 不支持 CSI s/u，会导致表格每轮向下堆叠、表头重复；
-            # 光标上移序列所有常见终端都支持，最稳妥。
-            if prev_lines > 0:
-                sys.stdout.write(f"\033[{prev_lines}A\033[J")
-            table = render_table(headers, rows, aligns)
-            sys.stdout.write(table + "\n")
-            sys.stdout.flush()
-            prev_lines = table.count("\n") + 1
+            rows.sort(key=lambda row: (providers.index(row[0]), row[1]))
+            if use_ansi:
+                # Redraw with cursor-up instead of save/restore for broad terminal support.
+                if prev_lines > 0:
+                    sys.stdout.write(f"\033[{prev_lines}A\033[J")
+                table = render_table(headers, rows, aligns)
+                sys.stdout.write(table + "\n")
+                sys.stdout.flush()
+                prev_lines = table.count("\n") + 1
     if not use_ansi:
         print(render_table(headers, rows, aligns), flush=True)
 
     correct = sum(graded)
-    print(f"\nGraded {len(graded)}/{args.tests}  correct={correct}  "
+    print(f"\nGraded {len(graded)}/{len(rows)}  correct={correct}  "
           f"accuracy={correct / len(graded) * 100:.1f}%"
           if graded else f"\nGraded 0/{args.tests}")
 
