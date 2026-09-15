@@ -57,7 +57,10 @@ PROVIDERS = {
             "CODEX_SESSIONS_PATH": "/data/ycfeng/stepcode-codex-home/.codex/sessions",
         },
     },
-    "cx": {"command": ("/data/ycfeng/codex-hud/bin/codex-hud",)},
+    "cx": {
+        "command": ("/data/ycfeng/codex-hud/bin/codex-hud",),
+        "env": {"CODEX_HOME": "/data/ycfeng/codex-home"},
+    },
     "codex-chatgpt": {"command": ("/data/ycfeng/codex-hud/bin/codex-hud",), "env": {"CODEX_HOME": "/data/ycfeng/codex-home-chatgpt"}, "prefix": ("-p", "chatgpt")},
 }
 
