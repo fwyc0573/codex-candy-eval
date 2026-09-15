@@ -30,3 +30,4 @@
 
 - The script writes the latest completed run to `/data/ycfeng/codex-iq.md`.
 - The artifact uses Markdown tables and includes run configuration plus the same summary shown in the terminal.
+- Real artifact verification: `python3 codex_candy_eval.py -m gpt-6-astra -r low -n 1 --timeout 120` exited with `RC=0` and wrote the following latest rows: `scx 13746/792/401/25.1s/31.5/✓`, `cx 19966/501/254/48.1s/10.4/✗`, `codex-chatgpt 21639/1100/516/54.8s/20.1/✓`; summary `Graded 3/3`, `correct=2`, `accuracy=66.7%`.
